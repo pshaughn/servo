@@ -29,3 +29,9 @@ opt-level = 3
 mio = { git = "https://github.com/servo/mio.git", branch = "servo" }
 # https://github.com/retep998/winapi-rs/pull/816
 winapi = { git = "https://github.com/servo/winapi-rs", branch = "patch-1" }
+
+core-text = { git = "https://github.com/servo/core-foundation-rs/", branch = "mac-font" }
+core-graphics = { git = "https://github.com/servo/core-foundation-rs/", branch = "mac-font" }
+core-foundation = { git = "https://github.com/servo/core-foundation-rs/", branch = "mac-font" }
+core-foundation-sys = { git = "https://github.com/servo/core-foundation-rs/", branch = "mac-font" }
+io-surface = { git = "https://github.com/servo/core-foundation-rs/", branch = "mac-font" }
