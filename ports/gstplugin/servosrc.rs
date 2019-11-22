@@ -107,11 +107,19 @@ impl ServoSrcGfx {
         let context = device
             .create_context(&descriptor)
             .expect("Failed to create context");
-        let mut device = Device::Hardware(device);
-        let mut context = Context::Hardware(context);
         let gl = Gl::gl_fns(gl::ffi_gl::Gl::load_with(|s| {
             device.get_proc_address(&context, s)
         }));
+
+        // This is a workaround for surfman having a different bootstrap API with Angle
+        #[cfg(target_os = "windows")]
+        let mut device = device;
+        #[cfg(not(target_os = "windows"))]
+        let mut device = Device::Hardware(device);
+        #[cfg(target_os = "windows")]
+        let mut context = context;
+        #[cfg(not(target_os = "windows"))]
+        let mut context = Context::Hardware(context);
 
         device.make_context_current(&context).unwrap();
 
