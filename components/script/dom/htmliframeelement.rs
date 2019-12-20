@@ -106,6 +106,9 @@ impl HTMLIFrameElement {
             .unwrap_or_else(|| ServoUrl::parse("about:blank").unwrap())
     }
 
+    // This sends messages that eventually lead to
+    // https://html.spec.whatwg.org/multipage/browsing-the-web.html#navigate
+    // steps happening somewhere.
     pub fn navigate_or_reload_child_browsing_context(
         &self,
         mut load_data: LoadData,
@@ -137,6 +140,11 @@ impl HTMLIFrameElement {
             LoadBlocker::terminate(&mut load_blocker);
         }
 
+        // This should be happening in step 16, which is all the way
+        // on the other side of step 15's go-into-parallel and therefore
+        // should definitely be on the receiving end of the message sends.
+        // Additionally, after it gets there it should be happening in a
+        // separate task.
         if load_data.url.scheme() == "javascript" {
             let window_proxy = self.GetContentWindow();
             if let Some(window_proxy) = window_proxy {
@@ -149,6 +157,12 @@ impl HTMLIFrameElement {
             }
         }
 
+        // If javascript has returned a string to replace the page content,
+        // existing load-blocking no longer matters and we're now blocking
+        // on the javascript.
+        // Once the Javascript is correctly moved to its own task, do we
+        // still need a blocker here at all, and if so when do we
+        // finish it?
         match load_data.js_eval_result {
             Some(JsEvalResult::NoContent) => (),
             _ => {
@@ -285,10 +299,15 @@ impl HTMLIFrameElement {
             return;
         }
 
+        // Otherwise, run "the otherwise steps for iframe or frame elements".
+        // TODO: share these steps with frame elements when frame elements exist
+
+        // Step 1
         let url = self.get_url();
 
-        // TODO: check ancestor browsing contexts for same URL
+        // Step 2 TODO: check ancestor browsing contexts for same URL
 
+        // Setting up the browsing context so it can be navigated
         let creator_pipeline_id = if url.as_str() == "about:blank" {
             Some(window.upcast::<GlobalScope>().pipeline_id())
         } else {
@@ -317,19 +336,16 @@ impl HTMLIFrameElement {
         self.navigate_or_reload_child_browsing_context(load_data, NavigationType::Regular, replace);
     }
 
+    // https://html.spec.whatwg.org/multipage/browsers.html#creating-a-new-nested-browsing-context
+    // When multiple top-level contexts exist, a lot of these steps should be
+    // in a place that they can share.
     fn create_nested_browsing_context(&self) {
-        // Synchronously create a new context and navigate it to about:blank.
-        let url = ServoUrl::parse("about:blank").unwrap();
-        let document = document_from_node(self);
+        // Step 1 is to do all of https://html.spec.whatwg.org/multipage/browsers.html#creating-a-nested-browsing-context
+
+        // Step 1: "Let browsingContext be a new browsing context".
+        // We have no actual browsing context struct, so initialize
+        // self's own browsing context properties
         let window = window_from_node(self);
-        let pipeline_id = Some(window.upcast::<GlobalScope>().pipeline_id());
-        let load_data = LoadData::new(
-            LoadOrigin::Script(document.origin().immutable().clone()),
-            url,
-            pipeline_id,
-            Some(Referrer::ReferrerUrl(document.url().clone())),
-            document.get_referrer_policy(),
-        );
         let browsing_context_id = BrowsingContextId::new();
         let top_level_browsing_context_id = window.window_proxy().top_level_browsing_context_id();
         self.pipeline_id.set(None);
@@ -337,11 +353,49 @@ impl HTMLIFrameElement {
         self.top_level_browsing_context_id
             .set(Some(top_level_browsing_context_id));
         self.browsing_context_id.set(Some(browsing_context_id));
+
+        // Step 2: TODO creator origin not implemented yet
+
+        // Step 3: TODO sandbox flags not implemented yet
+
+        // Step 4: Let origin be...
+        // This should do https://html.spec.whatwg.org/multipage/browsers.html#creating-a-new-browsing-context
+        // but with other concepts unimplemented this is the nearest approximation
+        let document = document_from_node(self);
+        let origin = LoadOrigin::Script(document.origin().immutable().clone());
+
+        // Step 5: TODO feature policy not implemented yet
+
+        // Steps 6-7: Spec is self-admittedly unclear
+        // and refers to issue tc39/ecma262#1357
+
+        // Step 8: TODO environment settings ubject not implemented yet
+
+        // Steps 9-14: The spec doesn't expressly say to navigate to
+        // about:blank, but it does say to do various things that navigating
+        // to about:blank does.
+        // Implementing this as a navigate probably has undesired
+        // timing side effects, since it ends up sending a
+        // ScriptNewIFrame message to constellation instead of doing
+        // everything synchronously.
+        let pipeline_id = Some(window.upcast::<GlobalScope>().pipeline_id());
+        let url = ServoUrl::parse("about:blank").unwrap();
+        let load_data = LoadData::new(
+            origin,
+            url,
+            pipeline_id,
+            Some(Referrer::ReferrerUrl(document.url().clone())),
+            document.get_referrer_policy(),
+        );
         self.navigate_or_reload_child_browsing_context(
             load_data,
             NavigationType::InitialAboutBlank,
             HistoryEntryReplacement::Disabled,
         );
+        // step 15: we now return from "create a new browsing context"
+        // to "create a new nested browsing context"
+        // The remaining steps there are implicit, as browsingContext
+        // has no state of its own distinct from self's state.
     }
 
     fn destroy_nested_browsing_context(&self) {

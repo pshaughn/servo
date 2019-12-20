@@ -653,19 +653,19 @@ impl WindowMethods for Window {
     // https://html.spec.whatwg.org/multipage/#dom-opener
     fn Opener(&self, cx: JSContext) -> JSVal {
         // Step 1, Let current be this Window object's browsing context.
-        let current = match self.window_proxy.get() {
+        // undiscarded, since the window's BC is the associated doc's BC,
+        // see https://html.spec.whatwg.org/multipage/#window-bc
+        // and a doc's BC is null if it has been discarded.
+        // see https://html.spec.whatwg.org/multipage/#concept-document-bc
+        let current = match self.undiscarded_window_proxy() {
             Some(proxy) => proxy,
             // Step 2, If current is null, then return null.
             None => return NullValue(),
         };
-        // Still step 2, since the window's BC is the associated doc's BC,
-        // see https://html.spec.whatwg.org/multipage/#window-bc
-        // and a doc's BC is null if it has been discarded.
-        // see https://html.spec.whatwg.org/multipage/#concept-document-bc
-        if current.is_browsing_context_discarded() {
-            return NullValue();
-        }
-        // Step 3 to 5.
+
+        // step 3 TODO check for disowned
+
+        // Step 4 to 5.
         current.opener(*cx)
     }
 
@@ -793,13 +793,13 @@ impl WindowMethods for Window {
 
     // https://html.spec.whatwg.org/multipage/#dom-frameelement
     fn GetFrameElement(&self) -> Option<DomRoot<Element>> {
-        // Steps 1-3.
+        // Steps 1-2
         let window_proxy = self.window_proxy.get()?;
 
-        // Step 4-5.
+        // Step 3-4
         let container = window_proxy.frame_element()?;
 
-        // Step 6.
+        // Step 5.
         let container_doc = document_from_node(container);
         let current_doc = GlobalScope::current()
             .expect("No current global object")
@@ -811,7 +811,7 @@ impl WindowMethods for Window {
         {
             return None;
         }
-        // Step 7.
+        // Step 6.
         Some(DomRoot::from_ref(container))
     }
 
@@ -894,13 +894,17 @@ impl WindowMethods for Window {
 
     // https://html.spec.whatwg.org/multipage/#dom-parent
     fn GetParent(&self) -> Option<DomRoot<WindowProxy>> {
-        // Steps 1-3.
+        // Steps 1-2.
         let window_proxy = self.undiscarded_window_proxy()?;
 
-        // Step 4.
+        // Step 3.
         if let Some(parent) = window_proxy.parent() {
             return Some(DomRoot::from_ref(parent));
         }
+
+        // "Step" 4 is just an assertion that, if we haven't already
+        // returned in step 3, then this is a top-level browsing context
+
         // Step 5.
         Some(window_proxy)
     }

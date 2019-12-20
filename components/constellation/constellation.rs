@@ -2877,6 +2877,10 @@ where
     // iframe via script. This will result in a new pipeline being spawned and
     // a child being added to the parent browsing context. This message is never
     // the result of a page navigation.
+    //
+    // from HTMLIFrameElement::navigate_or_reload_child_browsing_context
+    // when it was called with NavigationType::Regular
+    // part of https://html.spec.whatwg.org/multipage/browsing-the-web.html#navigate
     fn handle_script_loaded_url_in_iframe_msg(&mut self, load_info: IFrameLoadInfoWithData) {
         let IFrameLoadInfo {
             parent_pipeline_id,
@@ -2981,6 +2985,9 @@ where
         });
     }
 
+    // handle message from HTMLIFrameElement::navigate_or_reload_child_browsing_context
+    // when it was called with NavigationType::InitialAboutBlank
+    // part of https://html.spec.whatwg.org/multipage/browsing-the-web.html#navigate
     fn handle_script_new_iframe(
         &mut self,
         load_info: IFrameLoadInfoWithData,
