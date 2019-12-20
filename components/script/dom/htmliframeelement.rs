@@ -40,7 +40,7 @@ use script_traits::{
     LoadOrigin, UpdatePipelineIdReason, WindowSizeData,
 };
 use script_traits::{NewLayoutInfo, ScriptMsg};
-use servo_url::ServoUrl;
+use servo_url::{ImmutableOrigin, ServoUrl};
 use std::cell::Cell;
 use style::attr::{AttrValue, LengthOrPercentageOrAuto};
 
@@ -106,9 +106,12 @@ impl HTMLIFrameElement {
             .unwrap_or_else(|| ServoUrl::parse("about:blank").unwrap())
     }
 
+    // TODO: Some of these steps aren't really iframe-specific. Once
+    // frame, embed, or object child browsing contexts exist,
+    // this should share as much code with them as possible.
     pub fn navigate_or_reload_child_browsing_context(
         &self,
-        mut load_data: LoadData,
+        load_data: LoadData,
         nav_type: NavigationType,
         replace: HistoryEntryReplacement,
     ) {
@@ -138,27 +141,8 @@ impl HTMLIFrameElement {
         }
 
         if load_data.url.scheme() == "javascript" {
-            let window_proxy = self.GetContentWindow();
-            if let Some(window_proxy) = window_proxy {
-                // Important re security. See https://github.com/servo/servo/issues/23373
-                // TODO: check according to https://w3c.github.io/webappsec-csp/#should-block-navigation-request
-                if ScriptThread::check_load_origin(&load_data.load_origin, &document.url().origin())
-                {
-                    ScriptThread::eval_js_url(&window_proxy.global(), &mut load_data);
-                }
-            }
+            self.queue_javascript_url_task(&load_data.clone(), document.url().origin())
         }
-
-        match load_data.js_eval_result {
-            Some(JsEvalResult::NoContent) => (),
-            _ => {
-                let mut load_blocker = self.load_blocker.borrow_mut();
-                *load_blocker = Some(LoadBlocker::new(
-                    &*document,
-                    LoadType::Subframe(load_data.url.clone()),
-                ));
-            },
-        };
 
         let window = window_from_node(self);
         let old_pipeline_id = self.pipeline_id();
@@ -228,6 +212,48 @@ impl HTMLIFrameElement {
                     .unwrap();
             },
         }
+    }
+
+    // https://html.spec.whatwg.org/multipage/browsing-the-web.html#navigating-across
+    // Taking the previous step in the spec literally, the queueing-up of
+    // this task is itself step to be done in parallel, but that shouldn't be
+    // observable for this subcase.
+    fn queue_javascript_url_task(&self, load_data: &LoadData, origin: ImmutableOrigin) {
+        let mut load_data = load_data.clone();
+
+        let document = document_from_node(self);
+        let window = window_from_node(self);
+        let global = window.upcast::<GlobalScope>();
+        let trusted_self = Trusted::new(self);
+        let trusted_document = Trusted::new(&*document);
+
+        let task = task!(navigate_iframe_javascript: move || {
+          let tself=trusted_self.root();
+                 if let Some(window_proxy) = tself.GetContentWindow() {
+                    // Important re security. See https://github.com/servo/servo/issues/23373
+                    // TODO: check according to https://w3c.github.io/webappsec-csp/#should-block-navigation-request
+                    if ScriptThread::check_load_origin(&load_data.load_origin, &origin) {
+                        ScriptThread::eval_js_url(&window_proxy.global(), &mut load_data);
+                    }
+
+
+                match load_data.js_eval_result {
+                    Some(JsEvalResult::NoContent) => (),
+                    _ => {
+                        let mut load_blocker = tself.load_blocker.borrow_mut();
+                        *load_blocker = Some(LoadBlocker::new(
+                            &trusted_document.root(),
+                            LoadType::Subframe(load_data.url.clone()),
+                        ));
+                    },
+                }
+            }
+        });
+
+        global
+            .dom_manipulation_task_source()
+            .queue(task, global.upcast())
+            .expect("Enqueuing iframe navigate js task on the DOM manipulation task source failed");
     }
 
     /// <https://html.spec.whatwg.org/multipage/#process-the-iframe-attributes>
